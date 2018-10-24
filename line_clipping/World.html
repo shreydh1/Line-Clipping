@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>CSCI 4631 Homework 2</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+        controls {
+            text-align: center;
+            position: absolute;
+            width: 100%;
+            top: 1%;
+            left: 0;
+            color: white;
+        }
+        controls input {
+            width: 70px;
+            background-color: transparent;
+            border: 1px solid white;
+            margin-right: 10px;
+            color: white;
+        }
+        controls p {
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <canvas></canvas>
+    <controls>
+        <p>CSCI 4631 Homework 2</p>
+        <p>Nishan Rayamajhee</p>
+        <label>No. of Lines </label><input id="lines" type="number" value="10"></input>
+        <label>No. of Points </label><input id="dots" type="number" value="100"></input>
+        <p>Press W A S D or ↑ ↓ ← → to move the clipping window. Press +/- or scroll the mouse to resize it.</p>
+        <p>Note: Adding large amount of points might result in sluggish performance.</p>
+    </controls>
+<script>
+var canvas = document.querySelector('canvas'),
+    ctx = canvas.getContext('2d'),
+    lineInput = document.getElementById('lines'),
+    dotsInput = document.getElementById('dots'),
+    points = [],
+    lines = [];
+function resizeCanvas() {
+    'use strict';
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+function rand(min, max) {
+    'use strict';
+    min = Math.ceil(min);
+    max = Math.floor(max);
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+// update canvas size before setting up anything else relative to it
+resizeCanvas();
+var world = {
+    x: 0,
+    y: 0,
+    w: canvas.width > canvas.height ? canvas.width / 2 : canvas.width,
+    h: canvas.width < canvas.height ? canvas.height / 2 : canvas.height,
+    draw: function () {
+        'use strict';
+        if (canvas.width > canvas.height) {
+            this.w = canvas.width / 2;
+            this.h = canvas.height;
+        } else {
+            this.w = canvas.width;
+            this.h = canvas.height / 2;
+        }
+        ctx.fillStyle = 'black';
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+    }
+};
+var clippingWindow = {
+    x: world.w / 4,
+    y: world.h / 3,
+    w: world.w / 2,
+    h: world.h / 3,
+    scroll: function (dir) {
+        'use strict';
+        var delta = 50;
+        var after = {
+            w: this.w + delta * dir,
+            h: this.h + delta * dir
+        };
+        if ((after.w > 10 && after.h > 10) && (after.w < world.w && after.h < world.h)) {
+            this.x -= delta / 2 * dir;
+            this.y -= delta / 2 * dir;
+            this.w += delta * dir;
+            this.h += delta * dir;
+        }
+        update();
+    },
+    move: function(dir) {
+        var delta = 10;
+        if (dir === 'left') {
+            this.x -= delta;
+        } else if (dir == 'up') {
+            this.y -= delta;
+        } else if (dir === 'right') {
+            this.x += delta;
+        } else if (dir === 'down') {
+            this.y += delta;
+        }
+        update();
+    },
+    draw: function () {
+        'use strict';
+        ctx.strokeStyle = 'red';
+        ctx.beginPath();
+        ctx.rect(this.x, this.y, this.w, this.h);
+        ctx.closePath();
+        ctx.stroke();
+    },
+    containsDot: function (x, y) {
+        'use strict';
+        if (this.x < x && x < this.x + this.w && this.y < y && y < this.y + this.h) {
+            return true;
+        }
+    }
+};
+var viewPort = {
+    x: canvas.width > canvas.height ? world.w : 0,
+    y: canvas.width > canvas.height ? 0 : world.h,
+    w: world.w,
+    h: world.h,
+    draw: function () {
+        'use strict';
+        if (canvas.width > canvas.height) {
+            this.x = world.w;
+            this.y = 0;
+        } else {
+            this.x = 0;
+            this.y = world.h;
+        }
+        this.w = world.w;
+        this.h = world.h;
+        ctx.strokeStyle = 'red';
+        ctx.beginPath();
+        ctx.rect(this.x, this.y, this.w, this.h);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fillStyle = 'black';
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+    }
+};
+var Lines = {
+    source: [],
+    clipped: [],
+    view: [],
+    create: function(numLines) {
+        'use strict';
+        this.source = [];
+        var i,
+            line = [],
+            lines = [];
+        for (i = 0; i < numLines; i += 1) {
+            line = [[rand(0, world.w), rand(0, world.h)],
+                        [rand(0, world.w), rand(0, world.h)],
+                        'rgb(' + rand(0, 255) + ', ' + rand(0, 255) + ', ' + rand(0, 255)  + ')'];
+            lines.push(line);
+        }
+        return lines;
+    },
+    bitCode: function(point, box) {
+        'use strict';
+        var code = 0;
+
+        if (point[0] < box[0]) {
+            // left = 0001
+            code |= 1;
+        } else if (point[0] > box[2]) {
+            // right = 0010
+            code |= 2;
+        }
+        if (point[1] < box[1]) {
+            // bottom = 0100
+            code |= 4;
+        } else if (point[1] > box[3]) {
+            // top  = 1000
+            code |= 8;
+        }
+        return code;
+    },
+    clip: function(lines) {
+        'use strict';
+        var i, code1, code2, codeOut, x1, y1, x2, y2, x, y, loop, accept,
+            box = [clippingWindow.x, clippingWindow.y, clippingWindow.x + clippingWindow.w, clippingWindow.y + clippingWindow.h],
+            clippedLines = [];
+        for (i = 0; i < lines.length; i += 1) {
+            loop = true;
+            accept = false;
+            code1 = this.bitCode(lines[i][0], box);
+            code2 = this.bitCode(lines[i][1], box);
+            x1 = lines[i][0][0];
+            y1 = lines[i][0][1];
+            x2 = lines[i][1][0];
+            y2 = lines[i][1][1];
+            while (loop) {
+                // trivial accept
+                if (!(code1 | code2)) {
+                    accept = true;
+                    loop = false;
+                // trivial reject
+                } else if (code1 & code2) {
+                    loop = false;
+                // further analysis
+                } else {
+                    codeOut = code1 > 0 ? code1 : code2;
+                    if (codeOut & 1) {
+                        // left = 0001
+                        y = y1 + (y2 - y1) * (box[0] - x1) / (x2 - x1);
+                        x = box[0];
+                    } else if (codeOut & 2) {
+                        // right = 0010
+                        y = y1 + (y2 - y1) * (box[2] - x1) / (x2 - x1);
+                        x = box[2];
+                    } else if (codeOut & 4) {
+                        // bottom = 0100
+                        x = x1 + (x2 - x1) * (box[1] - y1) / (y2 - y1);
+                        y = box[1];
+                    } else if (codeOut & 8) {
+                        // top  = 1000
+                        x = x1 + (x2 - x1) * (box[3] - y1) / (y2 - y1);
+                        y = box[3];
+                    }
+                    if (codeOut === code1) {
+                        x1 = x;
+                        y1 = y;
+                        code1 = this.bitCode([x1, y1], box);
+                    } else {
+                        x2 = x;
+                        y2 = y;
+                        code2 = this.bitCode([x2, y2], box);
+                    }
+                }
+            }
+            if (accept) {
+                clippedLines.push([[x1, y1], [x2, y2], 'rgb(255, 0, 0)']);
+            }
+        }
+        return clippedLines;
+    },
+    drawOffset: function(lines, x, y){
+        var i;
+        for (i = 0; i < lines.length; i += 1) {
+            ctx.beginPath();
+            ctx.moveTo(x + lines[i][0][0], y + lines[i][0][1]);
+            ctx.lineTo(x + lines[i][1][0], y + lines[i][1][1]);
+            ctx.closePath();
+            ctx.strokeStyle = lines[i][2];
+            ctx.stroke();
+        }
+    },
+    draw: function(lines) {
+        this.drawOffset(lines, 0, 0);
+    },
+    toViewport: function(lines) {
+        var i, j, endpoints,
+            converted = [];
+        for (i = 0; i < lines.length; i += 1) {
+            endpoints = [];
+            for (j = 0; j < 2; j += 1) {
+                endpoints.push([Math.floor((lines[i][j][0] - clippingWindow.x) * (viewPort.w /clippingWindow.w)),
+                                Math.floor((lines[i][j][1] - clippingWindow.y) * (viewPort.h /clippingWindow.h))]);
+            }
+            converted.push([endpoints[0], endpoints[1], lines[i][2]]);
+        }
+        return converted;
+    }
+};
+var Points = {
+    source: [],
+    view: [],
+    create: function(numPoints) {
+        this.source = [];
+        var i,
+            point = [],
+            points = [];
+        for (i = 0; i < numPoints; i += 1) {
+            point = [rand(0, world.w),
+                    rand(0, world.h),
+                    'rgb(' + rand(0, 255) + ', ' + rand(0, 255) + ', ' + rand(0, 255)  + ')'];
+            points.push(point);
+        }
+        return points;
+    },
+    clip: function(points) {
+        var i,
+            clippedPoints = [];
+        for (i = 0; i < points.length; i += 1) {
+            if (clippingWindow.containsDot(points[i][0], points[i][1])){
+                clippedPoints.push([points[i][0], points[i][1], 'rgb(255, 0, 0)']);
+            }
+        }
+        return clippedPoints;
+    },
+    toViewport: function(points) {
+        var i,
+            converted = [];
+        for (i = 0; i < points.length; i += 1) {
+            converted.push([Math.floor((points[i][0] - Math.floor(clippingWindow.x)) * (viewPort.w /clippingWindow.w)),
+                            Math.floor((points[i][1] - Math.floor(clippingWindow.y)) * (viewPort.h /clippingWindow.h)),
+                            points[i][2]]);
+        }
+        return converted;
+    },
+    draw: function(points, box) {
+        var i, index, color = [],
+            canvasData = ctx.getImageData(box.x, box.y, box.w, box.h);
+        for (i = 0; i < points.length; i += 1) {
+            index = (points[i][0] + points[i][1] * box.w) * 4;
+            if (clippingWindow.containsDot(points[i][0], points[i][1])) {
+                canvasData.data[index] = 255;
+                canvasData.data[index + 1] = 0;
+                canvasData.data[index + 2] = 0;
+            } else {
+                color = points[i][2].match(/\d+/g);
+                canvasData.data[index] = color[0];
+                canvasData.data[index + 1] = color[1];
+                canvasData.data[index + 2] = color[2];
+            }
+            canvasData.data[index + 3] = 255;
+            ctx.putImageData(canvasData, box.x, box.y);
+        }
+    }
+};
+function setup() {
+    Points.source = Points.create(dotsInput.value);
+    Lines.source = Lines.create(lineInput.value);
+    resizeCanvas();
+    update();
+}
+function update() {
+    'use strict';
+    world.draw();
+    clippingWindow.draw();
+    viewPort.draw();
+
+    Points.view = Points.toViewport(Points.clip(Points.source));
+    Points.draw(Points.source, world);
+    Points.draw(Points.view, viewPort);
+    console.log(Points.source);
+    console.log(Points.view);
+
+    Lines.clipped = Lines.clip(Lines.source);
+    Lines.view = Lines.toViewport(Lines.clipped);
+    Lines.draw(Lines.source);
+    Lines.draw(Lines.clipped);
+    if (canvas.width > canvas.height) {
+        Lines.drawOffset(Lines.view, world.w, 0);
+    } else {
+        Lines.drawOffset(Lines.view, 0, world.h);
+    }
+}
+window.onload = setup;
+window.onresize = setup;
+lineInput.onchange = setup;
+dotsInput.onchange = setup;
+window.addEventListener('wheel', function (e) {
+    'use strict';
+    var dir = 1;
+    if (e.deltaY > 0) {
+        dir = -dir;
+    }
+    clippingWindow.scroll(dir);
+}, false);
+window.addEventListener('keydown', function (e) {
+    'use strict';
+    if (e.keyCode === 37 || e.keyCode === 65) {
+        clippingWindow.move('left');
+    }
+    if (e.keyCode === 38 || e.keyCode === 87) {
+        clippingWindow.move('up');
+    }
+    if (e.keyCode === 39 || e.keyCode === 68) {
+        clippingWindow.move('right');
+    }
+    if (e.keyCode === 40 || e.keyCode === 83) {
+        clippingWindow.move('down');
+    }
+    if (e.keyCode === 61 || e.keyCode === 187) {
+        clippingWindow.scroll(1);
+    }
+    if (e.keyCode === 173 || e.keyCode == 189) {
+        clippingWindow.scroll(-1);
+    }
+}, false);
+</script>
+</body>
+</html>
